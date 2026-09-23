@@ -328,9 +328,10 @@ bool seqInFreecells(GameState *state, int freecell)
     return false;
 }
 
-int fittingColumnDst(GameState *state, uint8_t fc_card)
+// Does not check, if there are enough free cells and/or columns available.
+int fittingColumnDst(GameState *state, uint8_t card)
 {
-    // First, search non-empty column onto which fc_card can be laid.
+    // First, search non-empty column onto which card can be laid.
     // Remember the last visited empty column.
     int empty = -1;
     for (int c = NUM_COLUMNS - 1; c >= 0; --c)
@@ -341,7 +342,7 @@ int fittingColumnDst(GameState *state, uint8_t fc_card)
         }
         else
         {
-            if (fc_card + 4 == state->columns[c][state->col_lens[c] - 1])
+            if (card + 4 == state->columns[c][state->col_lens[c] - 1])
                 return c;
         }
     }
@@ -437,6 +438,9 @@ bool solve(GameState *state, int depth)
     // =========================================================================
 
     // A) Tableau -> Tableau (INCLUDING META-MOVES / SUPERMOVES)
+    // Rules:
+    // - Not onto empty column if fits on other column.
+
     {
         int free_cells_count = 0;
         for (int f = 0; f < NUM_FREECELLS; f++)
@@ -459,11 +463,13 @@ bool solve(GameState *state, int depth)
 
             // Length of the contiguous sequence at the end of src
             int seq_len = get_sequence_length(state, src);
+            uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - seq_len];
+            int dst = fittingColumnDst(state, top_card_of_group);
 
-            for (int dst = 0; dst < NUM_COLUMNS; dst++)
+            // for (int dst = 0; dst < NUM_COLUMNS; dst++)
             {
-                if (src == dst)
-                    continue;
+                // if (src == dst)
+                // continue;
 
                 bool dst_is_empty = (state->col_lens[dst] == 0);
 
@@ -481,28 +487,27 @@ bool solve(GameState *state, int depth)
                     // 3. The next-higher card above the highest card of the moved sequence is not also reachable.
                     if (seq_len < state->col_lens[src] && seq_len <= max_cards)
                     {
-                        int k = seq_len;
-                        uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - k];
+                        int sl = seq_len;
 
                         // --- MAKE THE MOVE ---
-                        int src_start = state->col_lens[src] - k;
-                        for (int i = 0; i < k; i++)
+                        int src_start = state->col_lens[src] - sl;
+                        for (int i = 0; i < sl; i++)
                         {
                             state->columns[dst][i] = state->columns[src][src_start + i];
                             state->columns[src][src_start + i] = 255;
                         }
-                        state->col_lens[src] -= k;
-                        state->col_lens[dst] = k;
+                        state->col_lens[src] -= sl;
+                        state->col_lens[dst] = sl;
 
-                        move_history[depth] = (Move){MOVE_TABLEAU_TO_TABLEAU, (uint8_t)src, (uint8_t)dst, top_card_of_group, (uint8_t)k, *state};
+                        move_history[depth] = (Move){MOVE_TABLEAU_TO_TABLEAU, (uint8_t)src, (uint8_t)dst, top_card_of_group, (uint8_t)sl, *state};
 
                         if (solve(state, depth + 1))
                             return true;
 
                         // --- BACKTRACK ---
-                        state->col_lens[src] += k;
+                        state->col_lens[src] += sl;
                         state->col_lens[dst] = 0;
-                        for (int i = 0; i < k; i++)
+                        for (int i = 0; i < sl; i++)
                         {
                             state->columns[src][src_start + i] = state->columns[dst][i];
                             state->columns[dst][i] = 255;
@@ -514,57 +519,40 @@ bool solve(GameState *state, int depth)
                     // DESTINATION COLUMN IS NOT EMPTY:
                     uint8_t dst_card = state->columns[dst][state->col_lens[dst] - 1];
 
-                    // Search the source sequence (from 1 to min(seq_len, max_cards))
-                    // for the ONLY card that fits onto dst_card!
-                    int movable_limit = min(seq_len, max_cards);
-
-                    for (int k = 1; k <= movable_limit; k++)
+                    if (seq_len <= max_cards) // Makes only sense, if can be moved completely.
                     {
-                        uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - k];
+                        int sl = seq_len;
+                        uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - sl];
 
                         // Baker's Game rule: same suit (same symbol), rank exactly 1 lower.
                         // (top_card_of_group + 4) == dst_card
                         if ((top_card_of_group + 4) == dst_card)
                         {
-                            // printf("Before the move\n");
-                            // print_game_state(state);
                             // --- MAKE THE MOVE ---
-                            int src_start = state->col_lens[src] - k;
-                            for (int i = 0; i < k; i++)
+                            int src_start = state->col_lens[src] - sl;
+                            for (int i = 0; i < sl; i++)
                             {
                                 state->columns[dst][state->col_lens[dst] + i] = state->columns[src][src_start + i];
                                 state->columns[src][src_start + i] = 255;
                             }
-                            state->col_lens[src] -= k;
-                            state->col_lens[dst] += k;
+                            state->col_lens[src] -= sl;
+                            state->col_lens[dst] += sl;
 
-                            move_history[depth] = (Move){MOVE_TABLEAU_TO_TABLEAU, (uint8_t)src, (uint8_t)dst, top_card_of_group, (uint8_t)k, *state};
+                            move_history[depth] = (Move){MOVE_TABLEAU_TO_TABLEAU, (uint8_t)src, (uint8_t)dst, top_card_of_group, (uint8_t)sl, *state};
 
-                            // printf("After the move\n");
-                            // print_game_state(state);
                             if (solve(state, depth + 1))
                             {
                                 return true;
                             }
 
-                            // printf("Before backtrack\n");
-                            // print_game_state(state);
-
                             // --- BACKTRACK ---
-                            state->col_lens[dst] -= k;
-                            state->col_lens[src] += k;
-                            for (int i = 0; i < k; i++)
+                            state->col_lens[dst] -= sl;
+                            state->col_lens[src] += sl;
+                            for (int i = 0; i < sl; i++)
                             {
                                 state->columns[src][src_start + i] = state->columns[dst][state->col_lens[dst] + i];
                                 state->columns[dst][state->col_lens[dst] + i] = 255;
                             }
-
-                            // Since every card in the game is unique, only ONE k can match.
-                            // After the match and backtrack, stop!
-
-                            // printf("After backtrack\n");
-                            // print_game_state(state);
-                            break;
                         }
                     }
                 }
