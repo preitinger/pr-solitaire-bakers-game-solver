@@ -194,7 +194,7 @@ bool is_visited_or_add(const GameState *state, uint32_t *arenaIndex)
     // if (steps > 12000)
     // if (true)
     {
-        printf("\n>>> SNAPSHOT nach %llu Zuständen (Arena: %.2f MB) <<<\n",
+        printf("\n>>> SNAPSHOT after %llu states (arena: %.2f MB) <<<\n",
                (unsigned long long)(steps),
                arena_offset / (1024.0 * 1024.0));
         print_game_state(state);
@@ -224,7 +224,7 @@ bool is_visited_or_add(const GameState *state, uint32_t *arenaIndex)
         // DER PROBES-GUARD (Verhindert das Hängenbleiben!):
         if (probes >= HASH_TABLE_SIZE)
         {
-            fprintf(stderr, "\n[FEHLER] Hash-Tabelle ist voll (%d Buckets)! Bitte HASH_TABLE_SIZE vergrößern.\n", HASH_TABLE_SIZE);
+            fprintf(stderr, "\n[ERROR] Hash table is full (%d buckets)! Please increase HASH_TABLE_SIZE.\n", HASH_TABLE_SIZE);
             exit(1);
         }
     }
@@ -238,7 +238,7 @@ bool is_visited_or_add(const GameState *state, uint32_t *arenaIndex)
     // Neu -> In die Arena schreiben
     if (arena_offset + len > ARENA_SIZE)
     {
-        fprintf(stderr, "\n[FEHLER] Arena-Speicher voll!\n");
+        fprintf(stderr, "\n[ERROR] Arena memory is full!\n");
         exit(1);
     }
 
@@ -361,7 +361,7 @@ bool solve(GameState *state, int depth)
     }
     if (depth >= MAX_DEPTH)
     {
-        printf("\n\nMAX DEPTH - breche ab!\n\n");
+        printf("\n\nMAX DEPTH - aborting!\n\n");
         return false;
     }
 
@@ -1833,45 +1833,45 @@ void skipInputLine()
 void print_solution(void)
 {
     printf("\n====================================\n");
-    printf(" LÖSUNG GEFUNDEN IN %d ZÜGEN:\n", total_solution_moves);
+    printf(" SOLUTION FOUND IN %d MOVES:\n", total_solution_moves);
     printf("====================================\n\n");
 
     for (int i = 0; i < total_solution_moves; i++)
     {
         Move m = move_history[i];
-        printf("Zug %3d: ", i + 1);
+        printf("Move %3d: ", i + 1);
 
         switch (m.type)
         {
         case MOVE_TABLEAU_TO_FOUNDATION:
-            printf("Spalte %d   -> Zielstapel  [", m.src + 1);
+            printf("Column %d   -> Foundation  [", m.src + 1);
             print_card(m.card);
             printf("]\n");
             break;
         case MOVE_FREECELL_TO_FOUNDATION:
-            printf("FreeCell %d -> Zielstapel  [", m.src + 1);
+            printf("FreeCell %d -> Foundation  [", m.src + 1);
             print_card(m.card);
             printf("]\n");
             break;
         case MOVE_TABLEAU_TO_TABLEAU:
-            printf("Spalte %d   -> Spalte %d     [", m.src + 1, m.dst + 1);
+            printf("Column %d   -> Column %d     [", m.src + 1, m.dst + 1);
             print_card(m.card);
             printf("]\n");
             break;
         case MOVE_TABLEAU_TO_FREECELL:
-            printf("Spalte %d   -> FreeCell %d   [", m.src + 1, m.dst + 1);
+            printf("Column %d   -> FreeCell %d   [", m.src + 1, m.dst + 1);
             print_card(m.card);
             printf("]\n");
             break;
         case MOVE_FREECELL_TO_TABLEAU:
-            printf("FreeCell %d -> Spalte %d     [", m.src + 1, m.dst + 1);
+            printf("FreeCell %d -> Column %d     [", m.src + 1, m.dst + 1);
             print_card(m.card);
             printf("]\n");
             break;
         }
 
         print_game_state(&m.gameState);
-        printf("Weiter mit Enter ");
+        printf("Press Enter to continue ");
         fflush(stdout);
         skipInputLine();
     }
@@ -1931,15 +1931,15 @@ bool validate_deck(const GameState *game)
 
             if (card >= 52)
             {
-                printf("\nFehler: Ungültiger Kartenwert (%d) gefunden!\n", card);
+                printf("\nError: Invalid card value (%d) found!\n", card);
                 return false;
             }
 
             if (seen[card])
             {
-                printf("\nFehler: Karte ");
+                printf("\nError: Card ");
                 print_card(card);
-                printf(" ist DOPPELT im Spielfeld vorhanden!\n");
+                printf(" appears TWICE on the board!\n");
                 return false;
             }
 
@@ -1951,8 +1951,8 @@ bool validate_deck(const GameState *game)
     // 2. Prüfen, ob eine Karte fehlt
     if (card_count != 52)
     {
-        printf("\nFehler: Es wurden nur %d statt 52 Karten eingelesen!\n", card_count);
-        printf("Folgende Karten FEHLEN:\n");
+        printf("\nError: Only %d of 52 cards were read!\n", card_count);
+        printf("The following cards are MISSING:\n");
 
         for (int i = 0; i < 52; i++)
         {
@@ -1966,7 +1966,7 @@ bool validate_deck(const GameState *game)
         return false;
     }
 
-    printf("\n--> Validierung erfolgreich: Genau 52 eindeutige Karten eingelesen!\n");
+    printf("\n--> Validation successful: Exactly 52 unique cards were read!\n");
     return true;
 }
 
@@ -1978,7 +1978,7 @@ bool parse_board_from_file(GameState *out_game, FILE *f)
     char line_buf[512];
     int current_col = 0;
 
-    printf("--- Bitte Spielfeld eingeben (8 Spalten) ---\n");
+    printf("--- Please enter the board (8 columns) ---\n");
 
     while (current_col < 8 && fgets(line_buf, sizeof(line_buf), f))
     {
@@ -1992,7 +1992,7 @@ bool parse_board_from_file(GameState *out_game, FILE *f)
         if (strncmp(l, "-", 1) == 0)
         {
             out_game->col_lens[current_col++] = 0;
-            printf("Spalte %d eingelesen (0 Karten - Leer)\n", current_col);
+            printf("Column %d read (0 cards - empty)\n", current_col);
             continue;
         }
 
@@ -2027,7 +2027,7 @@ bool parse_board_from_file(GameState *out_game, FILE *f)
 
             if (s_idx == 0 || r_idx == 0)
             {
-                printf("\nFehler: Unvollständige Karte in Spalte %d nahe '%s'\n", current_col + 1, ptr);
+                printf("\nError: Incomplete card in column %d near '%s'\n", current_col + 1, ptr);
                 return false;
             }
 
@@ -2040,18 +2040,18 @@ bool parse_board_from_file(GameState *out_game, FILE *f)
             }
             else
             {
-                printf("\nFehler: Ungültige Karte '%s %s' in Spalte %d!\n", suit_buf, rank_buf, current_col + 1);
+                printf("\nError: Invalid card '%s %s' in column %d!\n", suit_buf, rank_buf, current_col + 1);
                 return false;
             }
         }
 
-        printf("Spalte %d eingelesen (%d Karten)\n", current_col + 1, out_game->col_lens[current_col]);
+        printf("Column %d read (%d cards)\n", current_col + 1, out_game->col_lens[current_col]);
         current_col++;
     }
 
     if (current_col < 8)
     {
-        printf("\nFehler: Nur %d von 8 Spalten eingelesen!\n", current_col);
+        printf("\nError: Only %d of 8 columns were read!\n", current_col);
         return false;
     }
 
@@ -2082,7 +2082,7 @@ void print_card(uint8_t card)
 
 void print_game_state(const GameState *s)
 {
-    printf("\n=================================== AKTUELLER ZUSTAND ===================================\n");
+    printf("\n===================================== CURRENT STATE =====================================\n");
 
     // 1. Foundations & FreeCells
     printf("FreeCells:   ");
@@ -2131,7 +2131,7 @@ void print_game_state(const GameState *s)
     for (int col = 0; col < 8; col++)
     {
         char header[16];
-        snprintf(header, sizeof(header), "Spalte %d", col + 1);
+        snprintf(header, sizeof(header), "Column %d", col + 1);
         printf("%-10s", header);
     }
     printf("\n");
@@ -2181,21 +2181,21 @@ void print_game_state(const GameState *s)
 static void print_usage(FILE *out, const char *prog)
 {
     fprintf(out,
-            "Aufruf: %s [OPTION] [DATEI]\n"
+            "Usage: %s [OPTION] [FILE]\n"
             "\n"
-            "Löser für Bäckers Spiel (Baker's Game).\n"
+            "Solver for Baker's Game.\n"
             "\n"
-            "Liest ein Spielfeld mit 8 Spalten. Ohne DATEI wird von der Standardeingabe gelesen.\n"
-            "DATEI wird nur verwendet, wenn sie eine reguläre Datei ist; sonst wird stdin gelesen.\n"
+            "Reads a board with 8 columns. Without FILE, input is read from standard input.\n"
+            "FILE is used only if it is a regular file; otherwise stdin is read.\n"
             "\n"
-            "Optionen:\n"
-            "  -h, -?, --help    diese Hilfe anzeigen und beenden\n"
+            "Options:\n"
+            "  -h, -?, --help    display this help and exit\n"
             "\n"
-            "Spielfeld:\n"
-            "  Eine Zeile je Spalte. Karten z. B. als \"p k\", \"h,2\", \"kr 10\".\n"
-            "  Farben: p (Pik), h (Herz), k (Karo), kr (Kreuz).\n"
-            "  Ränge: a, 2-10, j, q, k. Eine Zeile \"-\" ist eine leere Spalte.\n"
-            "  Zeilen, die mit # beginnen, werden ignoriert.\n",
+            "Board:\n"
+            "  One line per column. Cards for example as \"p k\", \"h,2\", \"kr 10\".\n"
+            "  Suits: p (spades), h (hearts), k (diamonds), kr (clubs).\n"
+            "  Ranks: a, 2-10, j, q, k. A line \"-\" is an empty column.\n"
+            "  Lines starting with # are ignored.\n",
             prog);
 }
 
@@ -2215,7 +2215,7 @@ int main(int argc, char **argv)
 
     if (!arena_buffer || !hash_buckets)
     {
-        fprintf(stderr, "Speicher konnte nicht allokiert werden.\n");
+        fprintf(stderr, "Could not allocate memory.\n");
         return 1;
     }
 
@@ -2231,7 +2231,7 @@ int main(int argc, char **argv)
             input = fopen(argv[1], "r");
             if (!input)
             {
-                fprintf(stderr, "Datei '%s' konnte nicht geöffnet werden.\n", argv[1]);
+                fprintf(stderr, "Could not open file '%s'.\n", argv[1]);
                 free(arena_buffer);
                 free(hash_buckets);
                 return 1;
@@ -2242,7 +2242,7 @@ int main(int argc, char **argv)
 
     if (!parse_board_from_file(&game, input))
     {
-        fprintf(stderr, "\nFehler beim Einlesen! Abbruch.\n");
+        fprintf(stderr, "\nError while reading input! Aborting.\n");
         if (close_input)
             fclose(input);
         free(arena_buffer);
@@ -2253,20 +2253,20 @@ int main(int argc, char **argv)
     if (close_input)
         fclose(input);
 
-    printf("\nSuche Lösung für das eingelesene Spielfeld...\n");
+    printf("\nSearching for a solution for the loaded board...\n");
     print_game_state(&game);
 
     if (solve(&game, 0))
     {
         print_solution();
-        printf("Eindeutige Zustände im RAM: %zu Bytes in der Arena verbraucht.\n", arena_offset);
+        printf("Unique states in RAM: %zu bytes used in the arena.\n", arena_offset);
     }
     else
     {
-        printf("Keine Lösung gefunden.\n");
+        printf("No solution found.\n");
     }
 
-    printf("Eindeutige Zustände im RAM: %zu Bytes in der Arena verbraucht.\n", arena_offset);
+    printf("Unique states in RAM: %zu bytes used in the arena.\n", arena_offset);
     printf("steps %lld\n", steps);
 
     free(arena_buffer);
