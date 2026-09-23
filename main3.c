@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include <sys/stat.h>
+#include <inttypes.h>
 
 #define ARENA_SIZE (256ULL * 1024 * 1024 << 2) // 1024 MB of main memory for states
 // ~67 million buckets (needs only about 268 MB of RAM for hash_buckets)
@@ -193,9 +194,9 @@ bool is_visited_or_add(const GameState *state, uint32_t *arenaIndex)
     // if (steps > 12000)
     // if (true)
     {
-        printf("\n>>> SNAPSHOT after %llu states (arena: %.2f MB) <<<\n",
-               (unsigned long long)(steps),
-               arena_offset / (1024.0 * 1024.0));
+        printf("\n>>> SNAPSHOT after %" PRIu64 " states (arena: %.2f MB) <<<\n",
+               steps,
+               (double)arena_offset / (1024.0 * 1024.0));
         print_game_state(state);
     }
 
@@ -231,7 +232,7 @@ bool is_visited_or_add(const GameState *state, uint32_t *arenaIndex)
     if (probes > maxProbes)
     {
         maxProbes = probes;
-        printf("maxProbes: %d - steps: %llu\n", maxProbes, steps);
+        printf("maxProbes: %d - steps: %" PRIu64 "\n", maxProbes, steps);
     }
 
     // New -> write into the arena
@@ -352,6 +353,59 @@ int fittingColumnDst(GameState *state, uint8_t card)
     return empty;
 }
 
+bool solve(GameState *state, int depth);
+
+bool tryOntoEmptyColumn(GameState *state, int src, int dst, int seq_len,
+                        int max_cards, int depth, uint8_t top_card_of_group)
+{
+    // DESTINATION COLUMN IS EMPTY:
+    // Move only if:
+    // 1. The sequence is not already the ENTIRE column (pointless isomorphism move).
+    // 2. The sequence is within the max-movable limit.
+    // NEW
+    // 3. The next-higher card above the highest card of the moved sequence is not also reachable.
+    if (seq_len < state->col_lens[src] && seq_len <= max_cards)
+    {
+        int sl = seq_len;
+
+        // --- MAKE THE MOVE ---
+        int src_start = state->col_lens[src] - sl;
+        for (int i = 0; i < sl; i++)
+        {
+            state->columns[dst][i] = state->columns[src][src_start + i];
+            state->columns[src][src_start + i] = 255;
+        }
+        state->col_lens[src] -= sl;
+        state->col_lens[dst] = sl;
+
+        move_history[depth] = (Move){MOVE_TABLEAU_TO_TABLEAU, (uint8_t)src, (uint8_t)dst, top_card_of_group, (uint8_t)sl, *state};
+
+        if (solve(state, depth + 1))
+            return true;
+
+        // --- BACKTRACK ---
+        state->col_lens[src] += sl;
+        state->col_lens[dst] = 0;
+        for (int i = 0; i < sl; i++)
+        {
+            state->columns[src][src_start + i] = state->columns[dst][i];
+            state->columns[dst][i] = 255;
+        }
+    }
+
+    return false;
+}
+
+int findFreeCol(GameState *state)
+{
+    for (int c = 0; c < NUM_COLUMNS; ++c)
+    {
+        if (state->col_lens[c] == 0)
+            return c;
+    }
+    return -1;
+}
+
 bool solve(GameState *state, int depth)
 {
     // print_game_state(state);
@@ -467,6 +521,7 @@ bool solve(GameState *state, int depth)
             int dst = fittingColumnDst(state, top_card_of_group);
 
             // for (int dst = 0; dst < NUM_COLUMNS; dst++)
+            if (dst != -1)
             {
                 // if (src == dst)
                 // continue;
@@ -479,40 +534,9 @@ bool solve(GameState *state, int depth)
 
                 if (dst_is_empty)
                 {
-                    // DESTINATION COLUMN IS EMPTY:
-                    // Move only if:
-                    // 1. The sequence is not already the ENTIRE column (pointless isomorphism move).
-                    // 2. The sequence is within the max-movable limit.
-                    // NEW
-                    // 3. The next-higher card above the highest card of the moved sequence is not also reachable.
-                    if (seq_len < state->col_lens[src] && seq_len <= max_cards)
-                    {
-                        int sl = seq_len;
-
-                        // --- MAKE THE MOVE ---
-                        int src_start = state->col_lens[src] - sl;
-                        for (int i = 0; i < sl; i++)
-                        {
-                            state->columns[dst][i] = state->columns[src][src_start + i];
-                            state->columns[src][src_start + i] = 255;
-                        }
-                        state->col_lens[src] -= sl;
-                        state->col_lens[dst] = sl;
-
-                        move_history[depth] = (Move){MOVE_TABLEAU_TO_TABLEAU, (uint8_t)src, (uint8_t)dst, top_card_of_group, (uint8_t)sl, *state};
-
-                        if (solve(state, depth + 1))
-                            return true;
-
-                        // --- BACKTRACK ---
-                        state->col_lens[src] += sl;
-                        state->col_lens[dst] = 0;
-                        for (int i = 0; i < sl; i++)
-                        {
-                            state->columns[src][src_start + i] = state->columns[dst][i];
-                            state->columns[dst][i] = 255;
-                        }
-                    }
+                    if (tryOntoEmptyColumn(state, src, dst, seq_len,
+                                           max_cards, depth, top_card_of_group))
+                        return true;
                 }
                 else
                 {
@@ -555,6 +579,16 @@ bool solve(GameState *state, int depth)
                             }
                         }
                     }
+
+                    // If the actions above were not successful, we have to check the move onto a free column, if there is any.
+                    int dst = findFreeCol(state);
+
+                    if (dst != -1)
+                    {
+                        if (tryOntoEmptyColumn(state, src, dst, seq_len,
+                                               max_cards, depth, top_card_of_group))
+                            return true;
+                    }
                 }
             }
         }
@@ -589,8 +623,9 @@ bool solve(GameState *state, int depth)
                 {
                     int f_slot = free_indices[0];
                     uint8_t card = state->columns[src][len - 1];
-                    const char *suit = suits[card & 3];
-                    const char *rank = ranks[card >> 2];
+                    // war nur zum debuggen:
+                    // const char *suit = suits[card & 3];
+                    // const char *rank = ranks[card >> 2];
 
                     state->freecells[f_slot] = card;
                     state->columns[src][len - 1] = 255;
@@ -1015,13 +1050,14 @@ void print_game_state(const GameState *s)
                 uint8_t card = s->columns[col][row];
 
                 // Format the card into a string first
-                char card_str[32];
                 // Scratch buffer for a print_card equivalent:
                 // const char *suit_names[] = {"Spades", "Hearts", "Diamonds", "Clubs"};
-                const char *rank_names[] = {"--", "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "B", "D", "K"};
+                // war nur zum Debuggen:
+                // const char *rank_names[] = {"--", "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
 
-                uint8_t suit = card & 3;
-                uint8_t rank = (card >> 2) + 1;
+                // war nur zum Debuggen:
+                // uint8_t suit = card & 3;
+                // uint8_t rank = (card >> 2) + 1;
 
                 print_card(card);
                 printf("      ");
@@ -1125,7 +1161,7 @@ int main(int argc, char **argv)
     }
 
     printf("Unique states in RAM: %zu bytes used in the arena.\n", arena_offset);
-    printf("steps %lld\n", steps);
+    printf("steps %" PRIu64 "\n", steps);
 
     free(arena_buffer);
     free(hash_buckets);
