@@ -8,11 +8,10 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 
-#define ARENA_SIZE (256ULL * 1024 * 1024 << 2) // 256 MB Hauptspeicher für Zustände
-// ~67 Millionen Buckets (braucht nur ca. 268 MB RAM for hash_buckets)
-#define HASH_TABLE_SIZE 67108859 // Primzahl
-// #define HASH_TABLE_SIZE 8388607             // Primzahl für Open-Addressing
-// #define MAX_DEPTH 200
+#define ARENA_SIZE (256ULL * 1024 * 1024 << 2) // 1024 MB of main memory for states
+// ~67 million buckets (needs only about 268 MB of RAM for hash_buckets)
+#define HASH_TABLE_SIZE 67108859 // prime number
+// #define HASH_TABLE_SIZE 8388607             // prime number for open addressing
 #define MAX_DEPTH 2000000
 #define NUM_COLUMNS 8
 #define NUM_FREECELLS 4
@@ -32,18 +31,18 @@ static inline int min(int a, int b)
     return b;
 }
 
-// --- TYPEN & STRUKTUREN ---
+// --- TYPES & STRUCTURES ---
 
-// Farben: 0 = Pik, 1 = Herz, 2 = Karo, 3 = Kreuz
-// Rang:   0 (Ass) bis 12 (König)
-// Formel: Karte = (Rang * 4) + Farbe (0..51, 255 = leer)
+// Suits: 0 = spades, 1 = hearts, 2 = diamonds, 3 = clubs
+// Rank:  0 (ace) through 12 (king)
+// Formula: card = (rank * 4) + suit (0..51, 255 = empty)
 
 typedef struct
 {
     uint8_t columns[NUM_COLUMNS][19];
     uint8_t col_lens[NUM_COLUMNS];
-    uint8_t freecells[NUM_FREECELLS]; // 255 = Leer
-    uint8_t foundations[4];           // Höchster gelöster Rang (0 = Kein, 1 = Ass, ..., 13 = König)
+    uint8_t freecells[NUM_FREECELLS]; // 255 = empty
+    uint8_t foundations[4];           // Highest solved rank (0 = none, 1 = ace, ..., 13 = king)
 } GameState;
 
 typedef enum
@@ -61,11 +60,11 @@ typedef struct
     uint8_t src;
     uint8_t dst;
     uint8_t card;
-    uint8_t count; // NEU: Anzahl bewegter Karten (für Meta-Moves)
+    uint8_t count; // NEW: number of cards moved (for meta-moves)
     GameState gameState;
 } Move;
 
-// --- GLOBALE SPEICHERSYSTEME ---
+// --- GLOBAL MEMORY SYSTEMS ---
 
 static uint8_t *arena_buffer = NULL;
 static size_t arena_offset = 0;
@@ -78,22 +77,22 @@ static uint64_t steps = 0;
 const char *suits[] = {"♠", "♥", "♦", "♣"};
 const char *ranks[] = {" A", " 2", " 3", " 4", " 5", " 6", " 7", " 8", " 9", "10", " J", " Q", " K"};
 
-// --- ARITHMETIK & HELFER ---
+// --- ARITHMETIC & HELPERS ---
 
 uint8_t make_card(uint8_t rank_1_to_13, uint8_t suit_0_to_3)
 {
     return ((rank_1_to_13 - 1) << 2) | (suit_0_to_3 & 3);
 }
 
-// --- KANONISCHES PACKEN & HASH-SET ---
+// --- CANONICAL PACKING & HASH SET ---
 
 int compColumn(const void *a1, const void *b1, void *s1)
 {
     const int *a = (const int *)a1;
     const int *b = (const int *)b1;
     const GameState *s = (const GameState *)s1;
-    // 1. Leere Spalten zuerst
-    // 2. Dann 1. Karte vergleichen
+    // 1. Empty columns first
+    // 2. Then compare the first card
 
     bool emptyA = s->col_lens[*a] == 0;
     bool emptyB = s->col_lens[*b] == 0;
@@ -130,7 +129,7 @@ int pack_state(const GameState *s, uint8_t *buf)
     for (int i = 0; i < 4; i++)
         buf[idx++] = s->foundations[i];
 
-    // 2. FreeCells sortieren (Symmetriebrechung) & packen (NUM_FREECELLS Bytes)
+    // 2. Sort FreeCells (symmetry breaking) and pack them (NUM_FREECELLS bytes)
     uint8_t fc[NUM_FREECELLS];
     memcpy(fc, s->freecells, NUM_FREECELLS);
     for (int i = 0; i < 3; i++)
@@ -148,7 +147,7 @@ int pack_state(const GameState *s, uint8_t *buf)
     for (int i = 0; i < NUM_FREECELLS; i++)
         buf[idx++] = fc[i];
 
-    // 3. Tableau-Spalten sortieren
+    // 3. Sort tableau columns
     int sorted[NUM_COLUMNS];
     for (int i = 0; i < NUM_COLUMNS; ++i)
     {
@@ -158,7 +157,7 @@ int pack_state(const GameState *s, uint8_t *buf)
 
     // TODO permutate sorted so that columns are sorted
 
-    // 3. Tableau-Spalten
+    // 3. Tableau columns
     for (int colI = 0; colI < NUM_COLUMNS; colI++)
     {
         int col = sorted[colI];
@@ -169,7 +168,7 @@ int pack_state(const GameState *s, uint8_t *buf)
         }
     }
 
-    return idx; // Exakte Gesamtlänge
+    return idx; // Exact total length
 }
 
 uint32_t hash_bytes(const uint8_t *data, size_t len)
@@ -207,7 +206,7 @@ bool is_visited_or_add(const GameState *state, uint32_t *arenaIndex)
     uint32_t index = hash % HASH_TABLE_SIZE;
     uint32_t probes = 0;
 
-    // Suchen nach freiem Slot ODER gewähltem Zustand
+    // Search for a free slot OR the chosen state
     while (hash_buckets[index] != 0)
     {
         uint32_t existing_offset = hash_buckets[index] - 1;
@@ -215,13 +214,13 @@ bool is_visited_or_add(const GameState *state, uint32_t *arenaIndex)
 
         if (memcmp(existing_data, tmp_buf, len) == 0)
         {
-            return true; // Bereits besucht!
+            return true; // Already visited!
         }
 
         index = (index + 1) % HASH_TABLE_SIZE;
         probes++;
 
-        // DER PROBES-GUARD (Verhindert das Hängenbleiben!):
+        // THE PROBES GUARD (prevents getting stuck!):
         if (probes >= HASH_TABLE_SIZE)
         {
             fprintf(stderr, "\n[ERROR] Hash table is full (%d buckets)! Please increase HASH_TABLE_SIZE.\n", HASH_TABLE_SIZE);
@@ -235,7 +234,7 @@ bool is_visited_or_add(const GameState *state, uint32_t *arenaIndex)
         printf("maxProbes: %d - steps: %llu\n", maxProbes, steps);
     }
 
-    // Neu -> In die Arena schreiben
+    // New -> write into the arena
     if (arena_offset + len > ARENA_SIZE)
     {
         fprintf(stderr, "\n[ERROR] Arena memory is full!\n");
@@ -245,12 +244,12 @@ bool is_visited_or_add(const GameState *state, uint32_t *arenaIndex)
     uint32_t new_offset = (uint32_t)arena_offset;
     *arenaIndex = new_offset;
     memcpy(&arena_buffer[new_offset], tmp_buf, len);
-    hash_buckets[index] = new_offset + 1; // 1-basierter Offset
+    hash_buckets[index] = new_offset + 1; // 1-based offset
     arena_offset += len;
 
-    return false; // Zustand war neu
+    return false; // State was new
 }
-// --- CORE REKURSION & LOGIK ---
+// --- CORE RECURSION & LOGIC ---
 
 bool is_solved(const GameState *state)
 {
@@ -258,12 +257,12 @@ bool is_solved(const GameState *state)
            state->foundations[2] == 13 && state->foundations[3] == 13;
 }
 
-// Berechnet wie viele Karten auf einmal bewegt werden dürfen
+// Calculates how many cards may be moved at once
 int max_movable_cards(int free_cells, int empty_cols, bool dst_is_empty)
 {
     if (dst_is_empty)
     {
-        // Wenn das Ziel leer ist, steht diese Spalte nicht als Zwischenspeicher zur Verfügung
+        // If the destination is empty, that column is not available as temporary storage
         if (empty_cols == 0)
             return free_cells + 1;
         return (free_cells + 1) * (1 << (empty_cols - 1));
@@ -274,7 +273,7 @@ int max_movable_cards(int free_cells, int empty_cols, bool dst_is_empty)
     }
 }
 
-// Gibt die Länge der validen Sequenz am Ende von col zurück (mindestens 1)
+// Returns the length of the valid sequence at the end of col (at least 1)
 int get_sequence_length(const GameState *s, int col)
 {
     int len = s->col_lens[col];
@@ -293,36 +292,36 @@ int get_sequence_length(const GameState *s, int col)
         uint8_t suit_above = card_above & 3;
         uint8_t rank_above = card_above >> 2;
 
-        // Bäckers Spiel: Gleicher Suit und exakt Rang - 1
+        // Baker's Game: same suit and rank exactly one lower
         if (suit_below == suit_above && rank_below + 1 == rank_above)
         {
             seq_len++;
         }
         else
         {
-            break; // Sequenz unterbrochen
+            break; // Sequence broken
         }
     }
     return seq_len;
 }
 
-// // Berechnet, wie viele Sequenzkarten insgesamt aus einer Spalte
-// // auf andere Spalten/FreeCells verteilt werden können, um die Karte darunter freizulegen.
+// // Calculates how many sequence cards can be distributed from one column
+// // onto other columns/FreeCells in total, in order to expose the card underneath.
 // int max_evacuable_cards(int free_cells, int empty_cols) {
 //     if (empty_cols == 0) {
-//         // Ohne leere Spalten können wir nur so viele Karten wegbewegen,
-//         // wie wir FreeCells haben (plus evtl. Anbauen an bestehende Spalten).
+//         // Without empty columns we can only move away as many cards
+//         // as we have FreeCells (plus possibly building onto existing columns).
 //         return free_cells;
 //     }
-//     // (F + 1) * 2^E - 1 ist die max. Blockgröße auf leere Spalten,
-//     // zusätzlich können F Karten auf FreeCells parken.
+//     // (F + 1) * 2^E - 1 is the max block size onto empty columns;
+//     // additionally, F cards can be parked in FreeCells.
 //     return ((free_cells + 1) * (1 << empty_cols) - 1) + free_cells;
 // }
 
 bool seqInFreecells(GameState *state, int freecell)
 {
-    // Ist die nächsthöhere Karte der gleichen Farbe wie die Karte in `freecell` in einer anderen freecell oder oberste erreichbare Karte in einer Spalte?
-    // Dann nämlich sollte eher die höchste gespielt werden, jedoch keinesfalls diese.
+    // Is the next-higher card of the same suit as the card in `freecell` in another FreeCell?
+    // If so, the higher card should be played instead, and this one must not be played.
     int card = state->freecells[freecell];
     if (card < 52)
     {
@@ -336,15 +335,6 @@ bool seqInFreecells(GameState *state, int freecell)
                     return true;
                 }
             }
-
-            // Das ist Unsinn:
-            // for (int c = 0; c < NUM_COLUMNS; ++c)
-            // {
-            //     if (state->col_lens[c] > 0 && state->columns[c][state->col_lens[c] - 1] == nextCard)
-            //     {
-            //         return true;
-            //     }
-            // }
         }
     }
 
@@ -365,13 +355,13 @@ bool solve(GameState *state, int depth)
         return false;
     }
 
-    // Prüfen, ob dieser Zustand bereits in der Arena/Hash-Tabelle liegt
+    // Check whether this state is already in the arena/hash table
     uint32_t arenaIndex = -1;
     if (is_visited_or_add(state, &arenaIndex))
         return false;
 
     // =========================================================================
-    // 1. AUTO-MOVES (DOMINANZ-REGEL FOR BÄCKERS SPIEL)
+    // 1. AUTO-MOVES (DOMINANCE RULE FOR BAKER'S GAME)
     // =========================================================================
 
     // Auto-Move: Tableau -> Foundation
@@ -385,21 +375,21 @@ bool solve(GameState *state, int depth)
 
             if (rank == state->foundations[suit] + 1)
             {
-                // Zug ausführen & Speicherplatz leeren
+                // Make the move and clear the slot
                 state->foundations[suit]++;
                 state->col_lens[col]--;
-                state->columns[col][state->col_lens[col]] = 255; // LEEREN!
+                state->columns[col][state->col_lens[col]] = 255; // CLEAR!
 
                 move_history[depth] = (Move){MOVE_TABLEAU_TO_FOUNDATION, col, suit, card, 0, *state};
 
                 bool res = solve(state, depth + 1);
 
                 // Backtrack
-                state->columns[col][state->col_lens[col]] = card; // WIEDERHERSTELLEN
+                state->columns[col][state->col_lens[col]] = card; // RESTORE
                 state->col_lens[col]++;
                 state->foundations[suit]--;
 
-                return res; // HARTER CUTOFF!
+                return res; // HARD CUTOFF!
             }
         }
     }
@@ -415,26 +405,26 @@ bool solve(GameState *state, int depth)
 
             if (rank == state->foundations[suit] + 1)
             {
-                // Zug ausführen
+                // Make the move
                 state->foundations[suit]++;
-                state->freecells[f] = 255; // LEEREN!
+                state->freecells[f] = 255; // CLEAR!
 
                 move_history[depth] = (Move){MOVE_FREECELL_TO_FOUNDATION, f, suit, card, 0, *state};
 
                 bool res = solve(state, depth + 1);
 
                 // Backtrack
-                state->freecells[f] = card; // WIEDERHERSTELLEN
+                state->freecells[f] = card; // RESTORE
                 state->foundations[suit]--;
 
-                return res; // HARTER CUTOFF!
+                return res; // HARD CUTOFF!
             }
         }
     }
 
-    // // ALT BEGIN
+    // // OLD BEGIN
     // // =========================================================================
-    // // 2. NORMALES BACKTRACKING (TABLEAU UND FREECELLS)
+    // // 2. NORMAL BACKTRACKING (TABLEAU AND FREECELLS)
     // // =========================================================================
 
     // // A) Tableau -> Tableau
@@ -453,23 +443,23 @@ bool solve(GameState *state, int depth)
     //         bool valid = false;
     //         if (state->col_lens[dst] == 0)
     //         {
-    //             // Nur sinnvoll, wenn wir damit wirklich Karten freilegen
+    //             // Only useful if this actually uncovers cards
     //             if (state->col_lens[src] > 1)
     //                 valid = true;
     //         }
     //         else
     //         {
     //             uint8_t dst_card = state->columns[dst][state->col_lens[dst] - 1];
-    //             // Bäckers Spiel: Gleiche Farbe, Rang - 1
+    //             // Baker's Game: same suit, rank - 1
     //             if ((src_card + 4) == dst_card)
     //                 valid = true;
     //         }
 
     //         if (valid)
     //         {
-    //             // Zug ausführen
+    //             // Make the move
     //             state->col_lens[src]--;
-    //             state->columns[src][state->col_lens[src]] = 255; // LEEREN!
+    //             state->columns[src][state->col_lens[src]] = 255; // CLEAR!
 
     //             state->columns[dst][state->col_lens[dst]] = src_card;
     //             state->col_lens[dst]++;
@@ -481,19 +471,19 @@ bool solve(GameState *state, int depth)
 
     //             // Backtrack
     //             state->col_lens[dst]--;
-    //             state->columns[dst][state->col_lens[dst]] = 255; // LEEREN!
+    //             state->columns[dst][state->col_lens[dst]] = 255; // CLEAR!
 
-    //             state->columns[src][state->col_lens[src]] = src_card; // WIEDERHERSTELLEN
+    //             state->columns[src][state->col_lens[src]] = src_card; // RESTORE
     //             state->col_lens[src]++;
     //         }
     //     }
     // }
 
     // =========================================================================
-    // 2. NORMALES BACKTRACKING (TABLEAU UND FREECELLS)
+    // 2. NORMAL BACKTRACKING (TABLEAU AND FREECELLS)
     // =========================================================================
 
-    // A) Tableau -> Tableau (INKLUSIVE META-MOVES / SUPERMOVES)
+    // A) Tableau -> Tableau (INCLUDING META-MOVES / SUPERMOVES)
     {
         int free_cells_count = 0;
         for (int f = 0; f < NUM_FREECELLS; f++)
@@ -514,7 +504,7 @@ bool solve(GameState *state, int depth)
             if (state->col_lens[src] == 0)
                 continue;
 
-            // Länge der zusammenhängenden Sequenz am Ende von src
+            // Length of the contiguous sequence at the end of src
             int seq_len = get_sequence_length(state, src);
 
             for (int dst = 0; dst < NUM_COLUMNS; dst++)
@@ -524,24 +514,24 @@ bool solve(GameState *state, int depth)
 
                 bool dst_is_empty = (state->col_lens[dst] == 0);
 
-                // Maximale Kapazität berechnen
+                // Calculate maximum capacity
                 int current_empty_cols = empty_cols_count - (dst_is_empty ? 1 : 0);
                 int max_cards = max_movable_cards(free_cells_count, current_empty_cols, dst_is_empty);
 
                 if (dst_is_empty)
                 {
-                    // ZIELSPALTE IS LEER:
-                    // Nur verschieben, wenn:
-                    // 1. Die Sequenz nicht bereits die GESAMTE Spalte ist (Sinnloser ISOMORPHIE-Zug).
-                    // 2. Die Sequenz innerhalb des Max-Movable-Limits liegt.
-                    // NEU
-                    // 3. Die nächsthöhere Karte nach der höchsten der bewegten Sequenz nicht auch erreichbar ist.
+                    // DESTINATION COLUMN IS EMPTY:
+                    // Move only if:
+                    // 1. The sequence is not already the ENTIRE column (pointless isomorphism move).
+                    // 2. The sequence is within the max-movable limit.
+                    // NEW
+                    // 3. The next-higher card above the highest card of the moved sequence is not also reachable.
                     if (seq_len < state->col_lens[src] && seq_len <= max_cards)
                     {
                         int k = seq_len;
                         uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - k];
 
-                        // --- ZUG AUSFÜHREN ---
+                        // --- MAKE THE MOVE ---
                         int src_start = state->col_lens[src] - k;
                         for (int i = 0; i < k; i++)
                         {
@@ -568,24 +558,24 @@ bool solve(GameState *state, int depth)
                 }
                 else
                 {
-                    // ZIELSPALTE IST NICHT LEER:
+                    // DESTINATION COLUMN IS NOT EMPTY:
                     uint8_t dst_card = state->columns[dst][state->col_lens[dst] - 1];
 
-                    // Wir suchen in der Quell-Sequenz (von 1 bis min(seq_len, max_cards))
-                    // nach der EINZIGEN Karte, die auf dst_card passt!
+                    // Search the source sequence (from 1 to min(seq_len, max_cards))
+                    // for the ONLY card that fits onto dst_card!
                     int movable_limit = min(seq_len, max_cards);
 
                     for (int k = 1; k <= movable_limit; k++)
                     {
                         uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - k];
 
-                        // Regel für Bäckers Spiel: Gleiche Farbe (gleiches Symbol), Rang genau 1 niedriger.
+                        // Baker's Game rule: same suit (same symbol), rank exactly 1 lower.
                         // (top_card_of_group + 4) == dst_card
                         if ((top_card_of_group + 4) == dst_card)
                         {
-                            // printf("Vor dem Zug\n");
+                            // printf("Before the move\n");
                             // print_game_state(state);
-                            // --- ZUG AUSFÜHREN ---
+                            // --- MAKE THE MOVE ---
                             int src_start = state->col_lens[src] - k;
                             for (int i = 0; i < k; i++)
                             {
@@ -597,14 +587,14 @@ bool solve(GameState *state, int depth)
 
                             move_history[depth] = (Move){MOVE_TABLEAU_TO_TABLEAU, (uint8_t)src, (uint8_t)dst, top_card_of_group, (uint8_t)k, *state};
 
-                            // printf("Nach dem Zug\n");
+                            // printf("After the move\n");
                             // print_game_state(state);
                             if (solve(state, depth + 1))
                             {
                                 return true;
                             }
 
-                            // printf("Vor Backtrack\n");
+                            // printf("Before backtrack\n");
                             // print_game_state(state);
 
                             // --- BACKTRACK ---
@@ -616,10 +606,10 @@ bool solve(GameState *state, int depth)
                                 state->columns[dst][state->col_lens[dst] + i] = 255;
                             }
 
-                            // Da jede Karte im Spiel einmalig ist, kann nur EIN k passen.
-                            // Nach dem Match und Backtrack abbrechen!
+                            // Since every card in the game is unique, only ONE k can match.
+                            // After the match and backtrack, stop!
 
-                            // printf("Nach Backtrack\n");
+                            // printf("After backtrack\n");
                             // print_game_state(state);
                             break;
                         }
@@ -628,9 +618,9 @@ bool solve(GameState *state, int depth)
             }
         }
     }
-    // // A) Tableau -> Tableau (INKLUSIVE META-MOVES / SUPERMOVES)
+    // // A) Tableau -> Tableau (INCLUDING META-MOVES / SUPERMOVES)
 
-    // // Vorab-Berechnung der freien Ressourcen für die Formel
+    // // Precompute free resources for the formula
     // int free_cells_count = 0;
     // for (int f = 0; f < NUM_FREECELLS; f++)
     // {
@@ -650,7 +640,7 @@ bool solve(GameState *state, int depth)
     //     if (state->col_lens[src] == 0)
     //         continue;
 
-    //     // Wie viele zusammenhängende Karten liegen am Ende von src?
+    //     // How many contiguous cards are at the end of src?
     //     int seq_len = get_sequence_length(state, src);
 
     //     for (int dst = 0; dst < NUM_COLUMNS; dst++)
@@ -660,13 +650,13 @@ bool solve(GameState *state, int depth)
 
     //         bool dst_is_empty = (state->col_lens[dst] == 0);
 
-    //         // Korrektur: Wenn die Zielspalte leer ist, zählt sie nicht als freie Spalte für den Transfer
+    //         // Correction: if the destination column is empty, it does not count as a free column for the transfer
     //         int current_empty_cols = empty_cols_count - (dst_is_empty ? 1 : 0);
     //         int max_cards = max_movable_cards(free_cells_count, current_empty_cols, dst_is_empty);
 
     //         int movable = min(seq_len, max_cards);
 
-    //         // Alle möglichen Sequenz-Längen ausprobieren (von 1 bis movable)
+    //         // Try all possible sequence lengths (from 1 to movable)
     //         for (int k = 1; k <= movable; k++)
     //         {
     //             uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - k];
@@ -674,28 +664,28 @@ bool solve(GameState *state, int depth)
     //             bool valid = false;
     //             if (dst_is_empty)
     //             {
-    //                 // Das Verschieben einer kompletten Spalte auf eine leere Spalte bringt keinen Nutzen
+    //                 // Moving an entire column onto an empty column provides no benefit
     //                 if (k < state->col_lens[src])
     //                     valid = true;
     //             }
     //             else
     //             {
     //                 uint8_t dst_card = state->columns[dst][state->col_lens[dst] - 1];
-    //                 // Bäckers Spiel: Gleiche Farbe, Rang - 1
+    //                 // Baker's Game: same suit, rank - 1
     //                 if ((top_card_of_group + 4) == dst_card)
     //                     valid = true;
     //             }
 
     //             if (valid)
     //             {
-    //                 // --- ZUG AUSFÜHREN (k Karten von src nach dst) ---
+    //                 // --- MAKE THE MOVE (k cards from src to dst) ---
     //                 int src_start = state->col_lens[src] - k;
 
     //                 for (int i = 0; i < k; i++)
     //                 {
     //                     uint8_t card = state->columns[src][src_start + i];
     //                     state->columns[dst][state->col_lens[dst] + i] = card;
-    //                     state->columns[src][src_start + i] = 255; // LEEREN
+    //                     state->columns[src][src_start + i] = 255; // CLEAR
     //                 }
 
     //                 state->col_lens[src] -= k;
@@ -706,7 +696,7 @@ bool solve(GameState *state, int depth)
     //                 if (solve(state, depth + 1))
     //                     return true;
 
-    //                 // --- BACKTRACK (k Karten zurückstellen) ---
+    //                 // --- BACKTRACK (put k cards back) ---
     //                 state->col_lens[src] += k;
     //                 state->col_lens[dst] -= k;
 
@@ -714,17 +704,17 @@ bool solve(GameState *state, int depth)
     //                 {
     //                     uint8_t card = state->columns[dst][state->col_lens[dst] + i];
     //                     state->columns[src][src_start + i] = card;
-    //                     state->columns[dst][state->col_lens[dst] + i] = 255; // LEEREN
+    //                     state->columns[dst][state->col_lens[dst] + i] = 255; // CLEAR
     //                 }
     //             }
     //         }
     //     }
     // }
 
-    // B) Tableau -> FreeCells (ATOMARER META-MOVE & EINZELZÜGE)
+    // B) Tableau -> FreeCells (ATOMIC META-MOVE & SINGLE MOVES)
 
     {
-        // Freie FreeCells zählen und Indizes sammeln
+        // Count free FreeCells and collect their indexes
         int free_cells_count = 0;
         int free_indices[NUM_FREECELLS];
         for (int f = 0; f < NUM_FREECELLS; f++)
@@ -745,7 +735,7 @@ bool solve(GameState *state, int depth)
 
                 int seq_len = get_sequence_length(state, src);
 
-                // FALL 1: Einzelkarte (seq_len == 1) auf eine FreeCell legen
+                // CASE 1: Place a single card (seq_len == 1) into a FreeCell
                 if (seq_len == 1)
                 {
                     int f_slot = free_indices[0];
@@ -767,13 +757,13 @@ bool solve(GameState *state, int depth)
                     state->columns[src][len - 1] = card;
                     state->freecells[f_slot] = 255;
                 }
-                // FALL 2: Atomarer Meta-Move – Eine GESAMTE Sequenz auf FreeCells evakuieren
+                // CASE 2: Atomic meta-move - evacuate an ENTIRE sequence into FreeCells
                 else if (seq_len > 1 && seq_len <= free_cells_count && len > seq_len)
                 {
-                    // Wir legen ALLE seq_len Karten der Sequenz auf einmal auf FreeCells,
-                    // um die Nicht-Sequenz-Karte DARUNTER freizulegen.
+                    // Place ALL seq_len cards of the sequence into FreeCells at once
+                    // in order to expose the non-sequence card UNDERNEATH.
                     uint8_t card;
-                    // ZUG AUSFÜHREN
+                    // MAKE THE MOVE
                     for (int i = 0; i < seq_len; i++)
                     {
                         card = state->columns[src][len - 1 - i];
@@ -783,7 +773,7 @@ bool solve(GameState *state, int depth)
                     }
                     state->col_lens[src] -= seq_len;
 
-                    // In der Historie vermerken (z. B. count = seq_len)
+                    // Record it in the history (e.g. count = seq_len)
                     move_history[depth] = (Move){MOVE_TABLEAU_TO_FREECELL, (uint8_t)src, (uint8_t)free_indices[0],
                                                  card, (uint8_t)seq_len, *state};
 
@@ -801,7 +791,7 @@ bool solve(GameState *state, int depth)
 
                         // int f_slot = free_indices[i];
                         // uint8_t card = state->freecells[f_slot];
-                        // state->columns[src][len - seq_len + i] = card; // Reihenfolge wiederherstellen
+                        // state->columns[src][len - seq_len + i] = card; // Restore order
                         // state->freecells[f_slot] = 255;
                     }
                 }
@@ -809,9 +799,9 @@ bool solve(GameState *state, int depth)
         }
 
         // B) FreeCell -> Tableau
-        // TODO Neue Regel: Wenn eine Sequenz in den Freecells ist, immer nur den höchsten auf eine freie Spalte bewegen!
-        // spiele/06.txt ohne diese neue Regel: Lösung mit 113 Zügen,
-        // ohne? -- ebenfalls 113 lol
+        // TODO New rule: if a sequence is in the FreeCells, always move only the highest card onto an empty column!
+        // spiele/06.txt without this new rule: solution in 113 moves,
+        // without? -- also 113 lol
 
         for (int f = 0; f < 4; f++)
         {
@@ -836,8 +826,8 @@ bool solve(GameState *state, int depth)
 
                 if (valid)
                 {
-                    // Zug ausführen
-                    state->freecells[f] = 255; // LEEREN!
+                    // Make the move
+                    state->freecells[f] = 255; // CLEAR!
                     state->columns[dst][state->col_lens[dst]] = fc_card;
                     state->col_lens[dst]++;
 
@@ -848,8 +838,8 @@ bool solve(GameState *state, int depth)
 
                     // Backtrack
                     state->col_lens[dst]--;
-                    state->columns[dst][state->col_lens[dst]] = 255; // LEEREN!
-                    state->freecells[f] = fc_card;                   // WIEDERHERSTELLEN
+                    state->columns[dst][state->col_lens[dst]] = 255; // CLEAR!
+                    state->freecells[f] = fc_card;                   // RESTORE
                 }
             }
         }
@@ -866,9 +856,9 @@ bool solve(GameState *state, int depth)
         //         {
         //             uint8_t card = state->columns[src][state->col_lens[src] - 1];
 
-        //             // Zug ausführen
+        //             // Make the move
         //             state->col_lens[src]--;
-        //             state->columns[src][state->col_lens[src]] = 255; // LEEREN!
+        //             state->columns[src][state->col_lens[src]] = 255; // CLEAR!
         //             state->freecells[f] = card;
 
         //             move_history[depth] = (Move){MOVE_TABLEAU_TO_FREECELL, src, f, card, 0, *state};
@@ -877,11 +867,11 @@ bool solve(GameState *state, int depth)
         //                 return true;
 
         //             // Backtrack
-        //             state->freecells[f] = 255;                        // LEEREN!
-        //             state->columns[src][state->col_lens[src]] = card; // WIEDERHERSTELLEN
+        //             state->freecells[f] = 255;                        // CLEAR!
+        //             state->columns[src][state->col_lens[src]] = card; // RESTORE
         //             state->col_lens[src]++;
 
-        //             break; // Erste freie Cell nutzen reicht
+        //             break; // Using the first free cell is enough
         //         }
         //     }
         // }
@@ -889,28 +879,28 @@ bool solve(GameState *state, int depth)
     return false;
 }
 
-// // --- HILFSFUNKTIONEN (Sollten bei dir bereits existieren) ---
+// // --- HELPER FUNCTIONS (should already exist in your code) ---
 
-// // Berechnet die maximale Anzahl an Karten, die auf EINE Zielspalte bewegt werden können
+// // Calculates the maximum number of cards that can be moved onto ONE destination column
 // static inline int max_movable_cards(int free_cells, int empty_cols, bool dst_is_empty) {
-//     int E = empty_cols; // Bereit korrigiert um die Zielspalte falls nötig
+//     int E = empty_cols; // Already adjusted for the destination column if needed
 //     return (free_cells + 1) * (1 << E);
 // }
 
-// // Berechnet, wie viele Sequenzkarten insgesamt evakuiert werden können
+// // Calculates how many sequence cards can be evacuated in total
 // static inline int max_evacuable_cards(int free_cells, int empty_cols) {
 //     if (empty_cols == 0) return free_cells;
 //     return ((free_cells + 1) * (1 << empty_cols) - 1) + free_cells;
 // }
 
-// // --- DIE VOLLSTÄNDIGE SOLVE-FUNKTION ---
+// // --- THE COMPLETE SOLVE FUNCTION ---
 
 // bool solve(GameState *state, int depth)
 // {
 //     if (depth >= MAX_DEPTH)
 //         return false;
 
-//     // Prüfen, ob das Spiel gewonnen ist (alle Foundations voll = 52 Karten)
+//     // Check whether the game is won (all foundations full = 52 cards)
 //     int total_foundations = 0;
 //     for (int f = 0; f < NUM_FOUNDATIONS; f++) {
 //         if (state->foundations[f] != 255) {
@@ -921,7 +911,7 @@ bool solve(GameState *state, int depth)
 //         return true;
 
 //     // =========================================================================
-//     // 1. AUTO-MOVES / FOUNDATION MOVES (Priorität 1)
+//     // 1. AUTO-MOVES / FOUNDATION MOVES (Priority 1)
 //     // =========================================================================
 
 //     // A) Tableau -> Foundation
@@ -939,7 +929,7 @@ bool solve(GameState *state, int depth)
 
 //         if (rank == required_rank)
 //         {
-//             // Zug ausführen
+//             // Make the move
 //             state->foundations[suit] = card;
 //             state->columns[src][len - 1] = 255;
 //             state->col_lens[src]--;
@@ -953,8 +943,8 @@ bool solve(GameState *state, int depth)
 //             state->columns[src][len - 1] = card;
 //             state->foundations[suit] = (f_card == 255) ? 255 : (f_card);
 
-//             // Safe-Move-Pruning: Wenn eine Karte gefahrlos auf die Foundation kann,
-//             // müssen wir in diesem Zustand keine schlechteren Alternativen testen.
+//             // Safe-move pruning: if a card can safely go to the foundation,
+//             // we do not need to try worse alternatives in this state.
 //             return false;
 //         }
 //     }
@@ -973,7 +963,7 @@ bool solve(GameState *state, int depth)
 
 //         if (rank == required_rank)
 //         {
-//             // Zug ausführen
+//             // Make the move
 //             state->foundations[suit] = card;
 //             state->freecells[f] = 255;
 
@@ -989,7 +979,7 @@ bool solve(GameState *state, int depth)
 //         }
 //     }
 
-//     // Vorab-Berechnung freier Ressourcen für Backtracking
+//     // Precompute free resources for backtracking
 //     int free_cells_count = 0;
 //     int free_indices[NUM_FREECELLS];
 //     for (int f = 0; f < NUM_FREECELLS; f++) {
@@ -1023,15 +1013,15 @@ bool solve(GameState *state, int depth)
 
 //             if (dst_is_empty)
 //             {
-//                 // ZIELSPALTE IST LEER:
-//                 // Nur die GANZE Sequenz verschieben, niemals zerreißen!
-//                 // Nicht verschieben, wenn die Sequenz bereits die komplette Spalte ist (Isomorphie).
+//                 // DESTINATION COLUMN IS EMPTY:
+//                 // Move only the WHOLE sequence, never tear it apart!
+//                 // Do not move it if the sequence is already the entire column (isomorphism).
 //                 if (seq_len < state->col_lens[src] && seq_len <= max_cards)
 //                 {
 //                     int k = seq_len;
 //                     uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - k];
 
-//                     // Zug ausführen
+//                     // Make the move
 //                     int src_start = state->col_lens[src] - k;
 //                     for (int i = 0; i < k; i++) {
 //                         state->columns[dst][i] = state->columns[src][src_start + i];
@@ -1055,7 +1045,7 @@ bool solve(GameState *state, int depth)
 //             }
 //             else
 //             {
-//                 // ZIELSPALTE IST NICHT LEER:
+//                 // DESTINATION COLUMN IS NOT EMPTY:
 //                 uint8_t dst_card = state->columns[dst][state->col_lens[dst] - 1];
 //                 int movable_limit = (seq_len < max_cards) ? seq_len : max_cards;
 
@@ -1063,10 +1053,10 @@ bool solve(GameState *state, int depth)
 //                 {
 //                     uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - k];
 
-//                     // Bäckers Spiel: Gleiche Farbe, Rang - 1
+//                     // Baker's Game: same suit, rank - 1
 //                     if ((top_card_of_group + 4) == dst_card)
 //                     {
-//                         // Zug ausführen
+//                         // Make the move
 //                         int src_start = state->col_lens[src] - k;
 //                         for (int i = 0; i < k; i++) {
 //                             state->columns[dst][state->col_lens[dst] + i] = state->columns[src][src_start + i];
@@ -1087,7 +1077,7 @@ bool solve(GameState *state, int depth)
 //                             state->columns[dst][state->col_lens[dst] + i] = 255;
 //                         }
 
-//                         break; // Nur EIN k kann farblich passen
+//                         break; // Only ONE k can match by suit
 //                     }
 //                 }
 //             }
@@ -1110,7 +1100,7 @@ bool solve(GameState *state, int depth)
 //             bool valid = false;
 //             if (dst_is_empty)
 //             {
-//                 // Eine Karte von FreeCell auf eine leere Spalte legen
+//                 // Place a card from a FreeCell onto an empty column
 //                 valid = true;
 //             }
 //             else
@@ -1123,7 +1113,7 @@ bool solve(GameState *state, int depth)
 
 //             if (valid)
 //             {
-//                 // Zug ausführen
+//                 // Make the move
 //                 state->columns[dst][state->col_lens[dst]] = card;
 //                 state->col_lens[dst]++;
 //                 state->freecells[f] = 255;
@@ -1141,7 +1131,7 @@ bool solve(GameState *state, int depth)
 //     }
 
 //     // =========================================================================
-//     // 4. BACKTRACKING: TABLEAU -> FREECELLS (EINZEL- & ATOMARE META-MOVES)
+//     // 4. BACKTRACKING: TABLEAU -> FREECELLS (SINGLE & ATOMIC META-MOVES)
 //     // =========================================================================
 //     if (free_cells_count > 0)
 //     {
@@ -1152,13 +1142,13 @@ bool solve(GameState *state, int depth)
 
 //             int seq_len = get_sequence_length(state, src);
 
-//             // FALL 1: Einzelne Karte am Ende (keine Sequenz mit Karte darüber)
+//             // CASE 1: Single card at the end (no sequence with the card above it)
 //             if (seq_len == 1)
 //             {
-//                 int f_slot = free_indices[0]; // Erste freie FreeCell
+//                 int f_slot = free_indices[0]; // First free FreeCell
 //                 uint8_t card = state->columns[src][len - 1];
 
-//                 // Zug ausführen
+//                 // Make the move
 //                 state->freecells[f_slot] = card;
 //                 state->columns[src][len - 1] = 255;
 //                 state->col_lens[src]--;
@@ -1172,14 +1162,14 @@ bool solve(GameState *state, int depth)
 //                 state->columns[src][len - 1] = card;
 //                 state->freecells[f_slot] = 255;
 //             }
-//             // FALL 2: Atomarer Meta-Move für Sequenzen (seq_len > 1)
-//             // Nur ausführen, wenn wir genug FreeCells haben UND die Spalte nicht komplett aus der Sequenz besteht
+//             // CASE 2: Atomic meta-move for sequences (seq_len > 1)
+//             // Execute only if we have enough FreeCells AND the column is not entirely the sequence
 //             else if (seq_len > 1 && seq_len <= free_cells_count && len > seq_len)
 //             {
-//                 // Wir legen ALLE seq_len Karten der Sequenz in EINEM Schritt ab,
-//                 // um die Karte DARUNTER freizulegen!
+//                 // Place ALL seq_len cards of the sequence in ONE step
+//                 // in order to expose the card UNDERNEATH!
 
-//                 // Zug ausführen
+//                 // Make the move
 //                 for (int i = 0; i < seq_len; i++) {
 //                     uint8_t card = state->columns[src][len - 1 - i];
 //                     int f_slot = free_indices[i];
@@ -1205,20 +1195,20 @@ bool solve(GameState *state, int depth)
 //         }
 //     }
 
-//     return false; // Kein Weg gefunden
+//     return false; // No path found
 // }
 
-// // Maximale Kartenanzahl, die als Block auf EINE Zielspalte bewegt werden kann
+// // Maximum number of cards that can be moved as a block onto ONE destination column
 // static inline int max_movable_cards(int free_cells, int empty_cols, bool dst_is_empty)
 // {
-//     // Wenn die Zielspalte leer ist, steht sie nicht als freier Zwischenspeicher zur Verfügung
+//     // If the destination column is empty, it is not available as free temporary storage
 //     int E = empty_cols - (dst_is_empty ? 1 : 0);
 //     if (E < 0)
 //         E = 0;
 //     return (free_cells + 1) * (1 << E);
 // }
 
-// Maximale Gesamtkapazität zum Evakuieren / Zerlegen einer Sequenz (FreeCells + leere Spalten)
+// Maximum total capacity for evacuating / breaking up a sequence (FreeCells + empty columns)
 static inline int max_evacuable_cards(int free_cells, int empty_cols)
 {
     if (empty_cols == 0)
@@ -1231,12 +1221,12 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //     if (depth >= MAX_DEPTH)
 //         return false;
 
-//     // 1. Siegbedingung prüfen
+//     // 1. Check the win condition
 //     if (is_solved(state))
 //         return true;
 
 //     // =========================================================================
-//     // 1. SAFE MOVES / FOUNDATION MOVES (PRIORITÄT 1)
+//     // 1. SAFE MOVES / FOUNDATION MOVES (PRIORITY 1)
 //     // =========================================================================
 
 //     // A) Tableau -> Foundation
@@ -1269,7 +1259,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //             state->columns[src][len - 1] = card;
 //             state->foundations[suit] = f_card;
 
-//             // Safe Move Pruning: Direkt abbrechen, keine weiteren Züge im selben Zustand testen!
+//             // Safe-move pruning: abort immediately; do not try further moves in the same state!
 //             return false;
 //         }
 //     }
@@ -1305,7 +1295,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //         }
 //     }
 
-//     // Vorab-Berechnung freier Ressourcen
+//     // Precompute free resources
 //     int free_cells_count = 0;
 //     int free_indices[NUM_FREECELLS];
 //     for (int f = 0; f < NUM_FREECELLS; f++)
@@ -1343,9 +1333,9 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 
 //             if (dst_is_empty)
 //             {
-//                 // ZIELSPALTE IST LEER:
-//                 // Nur k = seq_len erlauben. Niemals eine Sequenz zerreißen, um nur Teile auf leere Spalten zu legen!
-//                 // Und nur verschieben, wenn die Sequenz NICHT die ganze Spalte bildet (Isomorphie).
+//                 // DESTINATION COLUMN IS EMPTY:
+//                 // Allow only k = seq_len. Never tear a sequence apart just to place parts onto empty columns!
+//                 // And move it only if the sequence is NOT the entire column (isomorphism).
 //                 if (seq_len < state->col_lens[src] && seq_len <= max_cards)
 //                 {
 //                     int k = seq_len;
@@ -1377,7 +1367,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //             }
 //             else
 //             {
-//                 // ZIELSPALTE IST NICHT LEER:
+//                 // DESTINATION COLUMN IS NOT EMPTY:
 //                 uint8_t dst_card = state->columns[dst][state->col_lens[dst] - 1];
 //                 int movable_limit = (seq_len < max_cards) ? seq_len : max_cards;
 
@@ -1385,7 +1375,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //                 {
 //                     uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - k];
 
-//                     // Bäckers Spiel: Gleiche Farbe, Rang - 1
+//                     // Baker's Game: same suit, rank - 1
 //                     if ((top_card_of_group + 4) == dst_card)
 //                     {
 //                         int src_start = state->col_lens[src] - k;
@@ -1411,7 +1401,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //                             state->columns[dst][state->col_lens[dst] + i] = 255;
 //                         }
 
-//                         // Jede Karte ist eindeutig – nur genau ein k kann passen
+//                         // Every card is unique – exactly one k can match
 //                         break;
 //                     }
 //                 }
@@ -1467,7 +1457,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //     }
 
 //     // =========================================================================
-//     // 4. BACKTRACKING: TABLEAU -> FREECELLS (PRUNING & ATOMARE MOVES)
+//     // 4. BACKTRACKING: TABLEAU -> FREECELLS (PRUNING & ATOMIC MOVES)
 //     // =========================================================================
 //     if (free_cells_count > 0)
 //     {
@@ -1479,10 +1469,10 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 
 //             int seq_len = get_sequence_length(state, src);
 
-//             // FALL 1: Einzelne Karte am Ende (keine Sequenz mit der Karte darüber)
+//             // CASE 1: Single card at the end (no sequence with the card above it)
 //             if (seq_len == 1)
 //             {
-//                 int f_slot = free_indices[0]; // Ersten freien Slot nutzen (Isomorphie)
+//                 int f_slot = free_indices[0]; // Use the first free slot (isomorphism)
 //                 uint8_t card = state->columns[src][len - 1];
 
 //                 state->freecells[f_slot] = card;
@@ -1499,13 +1489,13 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //                 state->columns[src][len - 1] = card;
 //                 state->freecells[f_slot] = 255;
 //             }
-//             // FALL 2: Atomarer Meta-Move für Sequenzen (seq_len > 1)
+//             // CASE 2: Atomic meta-move for sequences (seq_len > 1)
 //             else if (seq_len > 1 && len > seq_len)
 //             {
 //                 int max_evac = max_evacuable_cards(free_cells_count, empty_cols_count);
 
-//                 // Pruning: Haben wir insgesamt genug Kapazität, um an das verdeckte Material zu kommen?
-//                 // Für diesen atomaren Schritt müssen zusätzlich ausreichend freie FreeCells bereitstehen.
+//                 // Pruning: do we have enough total capacity to reach the buried material?
+//                 // This atomic step also requires enough free FreeCells.
 //                 if (seq_len <= max_evac && seq_len <= free_cells_count)
 //                 {
 //                     for (int i = 0; i < seq_len; i++)
@@ -1546,12 +1536,12 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //     if (depth >= MAX_DEPTH)
 //         return false;
 
-//     // 1. Siegbedingung prüfen
+//     // 1. Check the win condition
 //     if (is_solved(state))
 //         return true;
 
 //     // =========================================================================
-//     // 1. SAFE MOVES / FOUNDATION MOVES (PRIORITÄT 1)
+//     // 1. SAFE MOVES / FOUNDATION MOVES (PRIORITY 1)
 //     // =========================================================================
 
 //     // A) Tableau -> Foundation
@@ -1561,10 +1551,10 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //         if (len == 0) continue;
 
 //         uint8_t card = state->columns[src][len - 1];
-//         uint8_t suit = card % 4; // FARBE = Rest bei Division durch 4
-//         uint8_t rank = card / 4; // RANG = Quotient bei Division durch 4
+//         uint8_t suit = card % 4; // SUIT = remainder when divided by 4
+//         uint8_t rank = card / 4; // RANK = quotient when divided by 4
 
-//         // Passt die Karte genau als nächste auf die Foundation dieser Farbe?
+//         // Does the card fit exactly as the next card on this suit's foundation?
 //         if (rank == state->foundations[suit])
 //         {
 //             state->foundations[suit]++;
@@ -1591,8 +1581,8 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //         if (state->freecells[f] == 255) continue;
 
 //         uint8_t card = state->freecells[f];
-//         uint8_t suit = card % 4; // FARBE = Rest bei Division durch 4
-//         uint8_t rank = card / 4; // RANG = Quotient bei Division durch 4
+//         uint8_t suit = card % 4; // SUIT = remainder when divided by 4
+//         uint8_t rank = card / 4; // RANK = quotient when divided by 4
 
 //         if (rank == state->foundations[suit])
 //         {
@@ -1611,7 +1601,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //         }
 //     }
 
-//     // Vorab-Berechnung freier Ressourcen
+//     // Precompute free resources
 //     int free_cells_count = 0;
 //     int free_indices[NUM_FREECELLS];
 //     for (int f = 0; f < NUM_FREECELLS; f++) {
@@ -1643,8 +1633,8 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 
 //             if (dst_is_empty)
 //             {
-//                 // ZIELSPALTE IST LEER:
-//                 // Nur ganze Sequenzen verschieben (seq_len) und Isomorphie beachten
+//                 // DESTINATION COLUMN IS EMPTY:
+//                 // Move only whole sequences (seq_len) and respect isomorphism
 //                 if (seq_len < state->col_lens[src] && seq_len <= max_cards)
 //                 {
 //                     int k = seq_len;
@@ -1673,7 +1663,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //             }
 //             else
 //             {
-//                 // ZIELSPALTE IST NICHT LEER:
+//                 // DESTINATION COLUMN IS NOT EMPTY:
 //                 uint8_t dst_card = state->columns[dst][state->col_lens[dst] - 1];
 //                 int movable_limit = (seq_len < max_cards) ? seq_len : max_cards;
 
@@ -1681,7 +1671,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //                 {
 //                     uint8_t top_card_of_group = state->columns[src][state->col_lens[src] - k];
 
-//                     // Bäckers Spiel Regel: Gleiche Farbe, Rang - 1
+//                     // Baker's Game rule: same suit, rank - 1
 //                     if ((top_card_of_group + 4) == dst_card)
 //                     {
 //                         int src_start = state->col_lens[src] - k;
@@ -1756,7 +1746,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //     }
 
 //     // =========================================================================
-//     // 4. BACKTRACKING: TABLEAU -> FREECELLS (PRUNING & ATOMARE MOVES)
+//     // 4. BACKTRACKING: TABLEAU -> FREECELLS (PRUNING & ATOMIC MOVES)
 //     // =========================================================================
 //     if (free_cells_count > 0)
 //     {
@@ -1767,7 +1757,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 
 //             int seq_len = get_sequence_length(state, src);
 
-//             // FALL 1: Einzelne Karte am Ende
+//             // CASE 1: Single card at the end
 //             if (seq_len == 1)
 //             {
 //                 int f_slot = free_indices[0];
@@ -1786,7 +1776,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //                 state->columns[src][len - 1] = card;
 //                 state->freecells[f_slot] = 255;
 //             }
-//             // FALL 2: Atomarer Meta-Move für Sequenzen
+//             // CASE 2: Atomic meta-move for sequences
 //             else if (seq_len > 1 && len > seq_len)
 //             {
 //                 int max_evac = max_evacuable_cards(free_cells_count, empty_cols_count);
@@ -1822,7 +1812,7 @@ static inline int max_evacuable_cards(int free_cells, int empty_cols)
 //     return false;
 // }
 
-// --- DRUCK-FUNKTIONEN ---
+// --- PRINT FUNCTIONS ---
 void print_card(uint8_t card);
 void skipInputLine()
 {
@@ -1878,23 +1868,23 @@ void print_solution(void)
     printf("\n");
 }
 
-// Liest Karten im Format "p k", "pk", "kr 10", "h,2", "k;a" etc.
+// Reads cards in the format "p k", "pk", "kr 10", "h,2", "k;a", and so on.
 int parse_card(const char *suit_str, const char *rank_str, uint8_t *out_card)
 {
-    // 1. Farbe ermitteln
+    // 1. Determine the suit
     uint8_t suit = 255;
     if (strcmp(suit_str, "p") == 0)
-        suit = 0; // Pik
+        suit = 0; // Spades
     else if (strcmp(suit_str, "h") == 0)
-        suit = 1; // Herz
+        suit = 1; // Hearts
     else if (strcmp(suit_str, "k") == 0)
-        suit = 2; // Karo
+        suit = 2; // Diamonds
     else if (strcmp(suit_str, "kr") == 0)
-        suit = 3; // Kreuz
+        suit = 3; // Clubs
     else
         return -1;
 
-    // 2. Rang ermitteln
+    // 2. Determine the rank
     uint8_t rank = 0;
     if (strcmp(rank_str, "a") == 0)
         rank = 1;
@@ -1922,7 +1912,7 @@ bool validate_deck(const GameState *game)
     bool seen[52] = {false};
     int card_count = 0;
 
-    // 1. Karten im Tableau zählen und markieren
+    // 1. Count and mark cards in the tableau
     for (int col = 0; col < NUM_COLUMNS; col++)
     {
         for (int i = 0; i < game->col_lens[col]; i++)
@@ -1948,7 +1938,7 @@ bool validate_deck(const GameState *game)
         }
     }
 
-    // 2. Prüfen, ob eine Karte fehlt
+    // 2. Check whether a card is missing
     if (card_count != 52)
     {
         printf("\nError: Only %d of 52 cards were read!\n", card_count);
@@ -1999,13 +1989,13 @@ bool parse_board_from_file(GameState *out_game, FILE *f)
         char *ptr = l;
         while (*ptr && out_game->col_lens[current_col] < 19)
         {
-            // Whitespace, Kommas, Strichpunkte überspringen
+            // Skip whitespace, commas, and semicolons
             while (*ptr && (isspace(*ptr) || *ptr == ',' || *ptr == ';'))
                 ptr++;
             if (*ptr == '\0')
                 break;
 
-            // Farbe lesen
+            // Read the suit
             char suit_buf[8] = {0};
             int s_idx = 0;
             while (*ptr && isalpha(*ptr) && s_idx < 7)
@@ -2013,11 +2003,11 @@ bool parse_board_from_file(GameState *out_game, FILE *f)
                 suit_buf[s_idx++] = (char)tolower(*ptr++);
             }
 
-            // Whitespace zwischen Farbe und Rang überspringen
+            // Skip whitespace between suit and rank
             while (*ptr && isspace(*ptr))
                 ptr++;
 
-            // Rang lesen
+            // Read the rank
             char rank_buf[8] = {0};
             int r_idx = 0;
             while (*ptr && isalnum(*ptr) && r_idx < 7)
@@ -2055,7 +2045,7 @@ bool parse_board_from_file(GameState *out_game, FILE *f)
         return false;
     }
 
-    // Unbedingt das Deck auf Vollständigkeit (exakt 52 eindeutige Karten) prüfen!
+    // Always check that the deck is complete (exactly 52 unique cards)!
     return validate_deck(out_game);
 }
 
@@ -2093,7 +2083,7 @@ void print_game_state(const GameState *s)
         printf("] ");
     }
     printf("      Foundations: ");
-    // const char *suits[] = {"Pik", "Herz", "Karo", "Kreuz"};
+    // const char *suits[] = {"Spades", "Hearts", "Diamonds", "Clubs"};
     for (int i = 0; i < 4; i++)
     {
         if (s->foundations[i] == 0)
@@ -2119,7 +2109,7 @@ void print_game_state(const GameState *s)
 
     printf("\n-----------------------------------------------------------------------------------------\n");
 
-    // 2. Maximum Höhe im Tableau ermitteln
+    // 2. Determine the maximum tableau height
     int max_len = 0;
     for (int col = 0; col < 8; col++)
     {
@@ -2127,7 +2117,7 @@ void print_game_state(const GameState *s)
             max_len = s->col_lens[col];
     }
 
-    // Header für die Spalten (exakt 12 Zeichen breit je Spalte)
+    // Column headers (exactly 12 characters wide per column)
     for (int col = 0; col < 8; col++)
     {
         char header[16];
@@ -2136,7 +2126,7 @@ void print_game_state(const GameState *s)
     }
     printf("\n");
 
-    // Tableau Zeile für Zeile von oben nach unten ausgeben
+    // Print the tableau row by row, top to bottom
     for (int row = 0; row < max_len; row++)
     {
         for (int col = 0; col < 8; col++)
@@ -2145,10 +2135,10 @@ void print_game_state(const GameState *s)
             {
                 uint8_t card = s->columns[col][row];
 
-                // Karte erst in einen String formatieren
+                // Format the card into a string first
                 char card_str[32];
-                // Hilfspuffer für print_card-Äquivalent:
-                // const char *suit_names[] = {"Pik", "Herz", "Karo", "Kreuz"};
+                // Scratch buffer for a print_card equivalent:
+                // const char *suit_names[] = {"Spades", "Hearts", "Diamonds", "Clubs"};
                 const char *rank_names[] = {"--", "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "B", "D", "K"};
 
                 uint8_t suit = card & 3;
@@ -2165,12 +2155,12 @@ void print_game_state(const GameState *s)
                 //     snprintf(card_str, sizeof(card_str), "%s %s", suits[suit], rank_names[rank]);
                 // }
 
-                // // Exakt auf 12 Zeichen Breite linksbündig auffüllen
+                // // Pad to exactly 12 characters, left-aligned
                 // printf("%-12s", card_str);
             }
             else
             {
-                printf("%-10s", ""); // Leeres Feld
+                printf("%-10s", ""); // Empty cell
             }
         }
         printf("\n");
