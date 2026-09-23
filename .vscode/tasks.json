@@ -5,6 +5,7 @@
             "label": "C/C++: gcc Aktive Datei kompilieren",
             "command": "/usr/local/bin/gcc",
             "args": [
+                "-Wall",
                 "-fdiagnostics-color=always",
                 "-g",
                 "${file}",
