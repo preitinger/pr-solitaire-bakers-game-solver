@@ -315,7 +315,7 @@ bool seqInFreecells(GameState *state, int freecell)
         int nextCard = card + 4;
         if (nextCard < 52)
         {
-            for (int f = 0; f < 4; ++f)
+            for (int f = 0; f < NUM_FREECELLS; ++f)
             {
                 if (state->freecells[f] == nextCard)
                 {
@@ -326,6 +326,29 @@ bool seqInFreecells(GameState *state, int freecell)
     }
 
     return false;
+}
+
+int fittingColumnDst(GameState *state, uint8_t fc_card)
+{
+    // First, search non-empty column onto which fc_card can be laid.
+    // Remember the last visited empty column.
+    int empty = -1;
+    for (int c = NUM_COLUMNS - 1; c >= 0; --c)
+    {
+        if (state->col_lens[c] == 0)
+        {
+            empty = c;
+        }
+        else
+        {
+            if (fc_card + 4 == state->columns[c][state->col_lens[c] - 1])
+                return c;
+        }
+    }
+
+    // Now, if an empty column exists, the lowest one of them is set in empty. Otherwise, empty == -1 which means no column does fit.
+    // So return empty here.
+    return empty;
 }
 
 bool solve(GameState *state, int depth)
@@ -352,7 +375,7 @@ bool solve(GameState *state, int depth)
     // =========================================================================
 
     // Auto-Move: Tableau -> Foundation
-    for (int col = 0; col < 8; col++)
+    for (int col = 0; col < NUM_COLUMNS; col++)
     {
         if (state->col_lens[col] > 0)
         {
@@ -382,7 +405,7 @@ bool solve(GameState *state, int depth)
     }
 
     // Auto-Move: FreeCell -> Foundation
-    for (int f = 0; f < 4; f++)
+    for (int f = 0; f < NUM_FREECELLS; f++)
     {
         if (state->freecells[f] != 255)
         {
@@ -637,45 +660,32 @@ bool solve(GameState *state, int depth)
         }
 
         // C) FreeCell -> Tableau
+        // Rules:
+        // - Not onto empty column if fits on other column.
 
-        for (int f = 0; f < 4; f++)
+        for (int f = 0; f < NUM_FREECELLS; f++)
         {
             if (state->freecells[f] == 255 || seqInFreecells(state, f))
                 continue;
 
             uint8_t fc_card = state->freecells[f];
-
-            for (int dst = 0; dst < 8; dst++)
+            int dst = fittingColumnDst(state, fc_card);
+            if (dst != -1)
             {
-                bool valid = false;
-                if (state->col_lens[dst] == 0)
-                {
-                    valid = true;
-                }
-                else
-                {
-                    uint8_t dst_card = state->columns[dst][state->col_lens[dst] - 1];
-                    if ((fc_card + 4) == dst_card)
-                        valid = true;
-                }
+                // Make the move
+                state->freecells[f] = 255; // CLEAR!
+                state->columns[dst][state->col_lens[dst]] = fc_card;
+                state->col_lens[dst]++;
 
-                if (valid)
-                {
-                    // Make the move
-                    state->freecells[f] = 255; // CLEAR!
-                    state->columns[dst][state->col_lens[dst]] = fc_card;
-                    state->col_lens[dst]++;
+                move_history[depth] = (Move){MOVE_FREECELL_TO_TABLEAU, f, dst, fc_card, 0, *state};
 
-                    move_history[depth] = (Move){MOVE_FREECELL_TO_TABLEAU, f, dst, fc_card, 0, *state};
+                if (solve(state, depth + 1))
+                    return true;
 
-                    if (solve(state, depth + 1))
-                        return true;
-
-                    // Backtrack
-                    state->col_lens[dst]--;
-                    state->columns[dst][state->col_lens[dst]] = 255; // CLEAR!
-                    state->freecells[f] = fc_card;                   // RESTORE
-                }
+                // Backtrack
+                state->col_lens[dst]--;
+                state->columns[dst][state->col_lens[dst]] = 255; // CLEAR!
+                state->freecells[f] = fc_card;                   // RESTORE
             }
         }
     }
@@ -957,7 +967,7 @@ void print_game_state(const GameState *s)
 
     // 1. Foundations & FreeCells
     printf("FreeCells:   ");
-    for (int f = 0; f < 4; f++)
+    for (int f = 0; f < NUM_FREECELLS; f++)
     {
         printf("[");
         print_card(s->freecells[f]);
@@ -992,14 +1002,14 @@ void print_game_state(const GameState *s)
 
     // 2. Determine the maximum tableau height
     int max_len = 0;
-    for (int col = 0; col < 8; col++)
+    for (int col = 0; col < NUM_COLUMNS; col++)
     {
         if (s->col_lens[col] > max_len)
             max_len = s->col_lens[col];
     }
 
     // Column headers (exactly 12 characters wide per column)
-    for (int col = 0; col < 8; col++)
+    for (int col = 0; col < NUM_COLUMNS; col++)
     {
         char header[16];
         snprintf(header, sizeof(header), "Column %d", col + 1);
@@ -1010,7 +1020,7 @@ void print_game_state(const GameState *s)
     // Print the tableau row by row, top to bottom
     for (int row = 0; row < max_len; row++)
     {
-        for (int col = 0; col < 8; col++)
+        for (int col = 0; col < NUM_COLUMNS; col++)
         {
             if (row < s->col_lens[col])
             {
