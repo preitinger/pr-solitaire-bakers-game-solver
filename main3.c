@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <sys/stat.h>
 
 #define ARENA_SIZE (256ULL * 1024 * 1024 << 2) // 256 MB Hauptspeicher für Zustände
 // ~67 Millionen Buckets (braucht nur ca. 268 MB RAM for hash_buckets)
@@ -86,27 +87,37 @@ uint8_t make_card(uint8_t rank_1_to_13, uint8_t suit_0_to_3)
 
 // --- KANONISCHES PACKEN & HASH-SET ---
 
-int compColumn(const void* a1, const void* b1, void* s1) {
-    const int* a = (const int*) a1;
-    const int* b = (const int*) b1;
-    const GameState* s = (const GameState*) s1;
+int compColumn(const void *a1, const void *b1, void *s1)
+{
+    const int *a = (const int *)a1;
+    const int *b = (const int *)b1;
+    const GameState *s = (const GameState *)s1;
     // 1. Leere Spalten zuerst
     // 2. Dann 1. Karte vergleichen
 
     bool emptyA = s->col_lens[*a] == 0;
     bool emptyB = s->col_lens[*b] == 0;
 
-    if (emptyA) {
-        if (emptyB) {
+    if (emptyA)
+    {
+        if (emptyB)
+        {
             return 0;
-        } else {
+        }
+        else
+        {
             return -1;
         }
-    } else {
-        if (emptyB) {
+    }
+    else
+    {
+        if (emptyB)
+        {
             return 1;
-        } else {
-            return (int) s->columns[*a][0] - (int) s->columns[*b][0];
+        }
+        else
+        {
+            return (int)s->columns[*a][0] - (int)s->columns[*b][0];
         }
     }
 }
@@ -139,10 +150,11 @@ int pack_state(const GameState *s, uint8_t *buf)
 
     // 3. Tableau-Spalten sortieren
     int sorted[NUM_COLUMNS];
-    for (int i = 0; i < NUM_COLUMNS; ++i) {
+    for (int i = 0; i < NUM_COLUMNS; ++i)
+    {
         sorted[i] = i;
     }
-    qsort_r(sorted, NUM_COLUMNS, sizeof(int), &compColumn, (void*)s);
+    qsort_r(sorted, NUM_COLUMNS, sizeof(int), &compColumn, (void *)s);
 
     // TODO permutate sorted so that columns are sorted
 
@@ -1859,6 +1871,8 @@ void print_solution(void)
         }
 
         print_game_state(&m.gameState);
+        printf("Weiter mit Enter ");
+        fflush(stdout);
         skipInputLine();
     }
     printf("\n");
@@ -1956,7 +1970,7 @@ bool validate_deck(const GameState *game)
     return true;
 }
 
-bool parse_board_from_stdin(GameState *out_game)
+bool parse_board_from_file(GameState *out_game, FILE *f)
 {
     memset(out_game, 0, sizeof(GameState));
     memset(out_game->freecells, 255, 4);
@@ -1966,7 +1980,7 @@ bool parse_board_from_stdin(GameState *out_game)
 
     printf("--- Bitte Spielfeld eingeben (8 Spalten) ---\n");
 
-    while (current_col < 8 && fgets(line_buf, sizeof(line_buf), stdin))
+    while (current_col < 8 && fgets(line_buf, sizeof(line_buf), f))
     {
         char *l = line_buf;
         while (isspace(*l))
@@ -2164,8 +2178,38 @@ void print_game_state(const GameState *s)
     printf("=========================================================================================\n\n");
 }
 
-int main(void)
+static void print_usage(FILE *out, const char *prog)
 {
+    fprintf(out,
+            "Aufruf: %s [OPTION] [DATEI]\n"
+            "\n"
+            "Löser für Bäckers Spiel (Baker's Game).\n"
+            "\n"
+            "Liest ein Spielfeld mit 8 Spalten. Ohne DATEI wird von der Standardeingabe gelesen.\n"
+            "DATEI wird nur verwendet, wenn sie eine reguläre Datei ist; sonst wird stdin gelesen.\n"
+            "\n"
+            "Optionen:\n"
+            "  -h, -?, --help    diese Hilfe anzeigen und beenden\n"
+            "\n"
+            "Spielfeld:\n"
+            "  Eine Zeile je Spalte. Karten z. B. als \"p k\", \"h,2\", \"kr 10\".\n"
+            "  Farben: p (Pik), h (Herz), k (Karo), kr (Kreuz).\n"
+            "  Ränge: a, 2-10, j, q, k. Eine Zeile \"-\" ist eine leere Spalte.\n"
+            "  Zeilen, die mit # beginnen, werden ignoriert.\n",
+            prog);
+}
+
+int main(int argc, char **argv)
+{
+    const char *prog = (argc > 0 && argv[0] && argv[0][0]) ? argv[0] : "main3";
+
+    if (argc >= 2 &&
+        (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "-?") == 0 || strcmp(argv[1], "--help") == 0))
+    {
+        print_usage(stdout, prog);
+        return 0;
+    }
+
     arena_buffer = calloc(ARENA_SIZE, 1);
     hash_buckets = calloc(HASH_TABLE_SIZE, sizeof(uint32_t));
 
@@ -2176,14 +2220,38 @@ int main(void)
     }
 
     GameState game;
+    FILE *input = stdin;
+    bool close_input = false;
 
-    if (!parse_board_from_stdin(&game))
+    if (argc == 2)
     {
-        fprintf(stderr, "\nFehler beim Einlesen von stdin! Abbruch.\n");
+        struct stat st;
+        if (stat(argv[1], &st) == 0 && S_ISREG(st.st_mode))
+        {
+            input = fopen(argv[1], "r");
+            if (!input)
+            {
+                fprintf(stderr, "Datei '%s' konnte nicht geöffnet werden.\n", argv[1]);
+                free(arena_buffer);
+                free(hash_buckets);
+                return 1;
+            }
+            close_input = true;
+        }
+    }
+
+    if (!parse_board_from_file(&game, input))
+    {
+        fprintf(stderr, "\nFehler beim Einlesen! Abbruch.\n");
+        if (close_input)
+            fclose(input);
         free(arena_buffer);
         free(hash_buckets);
         return 1;
     }
+
+    if (close_input)
+        fclose(input);
 
     printf("\nSuche Lösung für das eingelesene Spielfeld...\n");
     print_game_state(&game);
