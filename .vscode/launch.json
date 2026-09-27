@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/main3",
-            "args": ["<${workspaceFolder}/spiele/05.txt"],
+            "args": ["<${workspaceFolder}/spiele/23.txt"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
             "environment": [],

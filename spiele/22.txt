@@ -1,0 +1,8 @@
+h k k 10 p 2 p 10 k k p 7 p 3
+h 6 kr 4 k 7 p 5 p 9 kr 2 p q
+h 4 h 9 k 6 k 5 p 6 h 2 h 5
+k a kr 6 k q kr a kr 7 p 4 p 8
+p k h q h 3 k 2 p a k 9
+kr j p j kr k h j kr q k 3
+h 8 k 4 kr 10 h 7 kr 9 k j
+kr 8 kr 5 h a h 10 kr 3 k 8
